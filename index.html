@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Scrollable PDF Viewer</title>
+    <title>Scrollable PDF Viewer with Offline Support</title>
     <style>
         html, body {
             margin: 0;
@@ -81,6 +81,11 @@
             text-align: center;
             color: #333;
         }
+        .status-text {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
@@ -91,6 +96,7 @@
                 <div class="progress" id="progress-bar"></div>
             </div>
             <div class="progress-text" id="progress-text">Downloading: 0%</div>
+            <div class="status-text" id="status-text"></div>
         </div>
     </div>
     
@@ -108,19 +114,19 @@
                 this.progressContainer = document.getElementById('progress-container');
                 this.progressBar = document.getElementById('progress-bar');
                 this.progressText = document.getElementById('progress-text');
+                this.statusText = document.getElementById('status-text');
                 
-                this.pdfData = null;
                 this.pdfUrl = '18.pdf';
+                this.storageKey = 'offline_pdf_' + this.pdfUrl;
                 this.initializeViewer();
             }
 
             initializeViewer() {
-                // Check if PDF is already downloaded
-                const storedPDF = localStorage.getItem(this.pdfUrl);
+                // Check if PDF is already in localStorage
+                const storedPDF = localStorage.getItem(this.storageKey);
                 if (storedPDF) {
-                    this.pdfData = storedPDF;
                     this.downloadScreen.style.display = 'none';
-                    this.loadPDF(storedPDF);
+                    this.loadPDFFromStorage(storedPDF);
                 } else {
                     this.setupDownloadButton();
                 }
@@ -130,43 +136,53 @@
                 this.downloadButton.addEventListener('click', async () => {
                     this.downloadButton.style.display = 'none';
                     this.progressContainer.style.display = 'block';
-                    await this.downloadAndLoadPDF();
+                    await this.downloadAndStorePDF();
                 });
             }
 
-            updateProgress(progress) {
+            updateProgress(progress, status = '') {
                 const percentage = Math.round(progress * 100);
                 this.progressBar.style.width = `${percentage}%`;
                 this.progressText.textContent = `Downloading: ${percentage}%`;
+                if (status) {
+                    this.statusText.textContent = status;
+                }
             }
 
-            async downloadAndLoadPDF() {
+            async downloadAndStorePDF() {
                 try {
-                    // Configure PDF.js
-                    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-
-                    // Load PDF with progress
-                    const loadingTask = pdfjsLib.getDocument(this.pdfUrl);
+                    this.updateProgress(0, 'Fetching PDF file...');
                     
-                    loadingTask.onProgress = (progressData) => {
-                        if (progressData.total > 0) {
-                            const progress = progressData.loaded / progressData.total;
-                            this.updateProgress(progress);
-                        }
-                    };
-
-                    const pdfDocument = await loadingTask.promise;
+                    // Fetch the PDF file
+                    const response = await fetch(this.pdfUrl);
+                    const pdfBlob = await response.blob();
                     
-                    // Store in localStorage for future visits
-                    localStorage.setItem(this.pdfUrl, this.pdfUrl);
+                    this.updateProgress(0.3, 'Converting to base64...');
+                    
+                    // Convert blob to base64
+                    const base64data = await this.blobToBase64(pdfBlob);
+                    
+                    this.updateProgress(0.6, 'Storing PDF for offline use...');
+                    
+                    // Store in localStorage
+                    try {
+                        localStorage.setItem(this.storageKey, base64data);
+                    } catch (e) {
+                        console.error('Storage error:', e);
+                        this.statusText.textContent = 'Error: PDF too large for storage. Proceeding with online viewing.';
+                    }
 
-                    // Hide download screen after completion
+                    this.updateProgress(0.8, 'Preparing PDF viewer...');
+                    
+                    // Load the PDF
+                    await this.loadPDFFromStorage(base64data);
+                    
+                    this.updateProgress(1, 'Complete!');
+                    
+                    // Hide download screen
                     setTimeout(() => {
                         this.downloadScreen.style.display = 'none';
                     }, 500);
-
-                    // Render PDF
-                    await this.renderPDF(pdfDocument);
 
                 } catch (error) {
                     console.error('PDF Loading Error:', error);
@@ -175,11 +191,32 @@
                 }
             }
 
-            async loadPDF(data) {
+            blobToBase64(blob) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+            }
+
+            async loadPDFFromStorage(base64data) {
                 try {
+                    // Configure PDF.js
                     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-                    const pdfDocument = await pdfjsLib.getDocument(data).promise;
+                    
+                    // Convert base64 to array buffer
+                    const binary = atob(base64data.split(',')[1]);
+                    const array = new Uint8Array(binary.length);
+                    for (let i = 0; i < binary.length; i++) {
+                        array[i] = binary.charCodeAt(i);
+                    }
+
+                    // Load and render PDF
+                    const loadingTask = pdfjsLib.getDocument(array);
+                    const pdfDocument = await loadingTask.promise;
                     await this.renderPDF(pdfDocument);
+
                 } catch (error) {
                     console.error('PDF Loading Error:', error);
                     this.pdfContainer.innerHTML = `<p>Error loading PDF: ${error.message}</p>`;
