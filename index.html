@@ -9,6 +9,7 @@
             padding: 0;
             height: 100%;
             overflow: hidden;
+            font-family: Arial, sans-serif;
         }
         #pdf-container {
             width: 95%;
@@ -31,9 +32,68 @@
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             margin-bottom: 10px;
         }
+        .download-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .download-button {
+            padding: 12px 24px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-bottom: 20px;
+            transition: background-color 0.3s;
+        }
+        .download-button:hover {
+            background-color: #45a049;
+        }
+        .progress-container {
+            width: 300px;
+            display: none;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        .progress {
+            width: 0%;
+            height: 100%;
+            background-color: #4CAF50;
+            transition: width 0.3s ease-in-out;
+        }
+        .progress-text {
+            text-align: center;
+            color: #333;
+        }
     </style>
 </head>
 <body>
+    <div class="download-container" id="download-screen">
+        <button class="download-button" id="download-button">Download PDF</button>
+        <div class="progress-container" id="progress-container">
+            <div class="progress-bar">
+                <div class="progress" id="progress-bar"></div>
+            </div>
+            <div class="progress-text" id="progress-text">Downloading: 0%</div>
+        </div>
+    </div>
+    
     <div id="pdf-container">
         <div id="pdf-render"></div>
     </div>
@@ -43,40 +103,108 @@
         class PDFViewer {
             constructor() {
                 this.pdfContainer = document.getElementById('pdf-render');
+                this.downloadScreen = document.getElementById('download-screen');
+                this.downloadButton = document.getElementById('download-button');
+                this.progressContainer = document.getElementById('progress-container');
+                this.progressBar = document.getElementById('progress-bar');
+                this.progressText = document.getElementById('progress-text');
+                
+                this.pdfData = null;
+                this.pdfUrl = '1.pdf';
+                this.initializeViewer();
             }
 
-            async loadPDF(url) {
+            initializeViewer() {
+                // Check if PDF is already downloaded
+                const storedPDF = localStorage.getItem(this.pdfUrl);
+                if (storedPDF) {
+                    this.pdfData = storedPDF;
+                    this.downloadScreen.style.display = 'none';
+                    this.loadPDF(storedPDF);
+                } else {
+                    this.setupDownloadButton();
+                }
+            }
+
+            setupDownloadButton() {
+                this.downloadButton.addEventListener('click', async () => {
+                    this.downloadButton.style.display = 'none';
+                    this.progressContainer.style.display = 'block';
+                    await this.downloadAndLoadPDF();
+                });
+            }
+
+            updateProgress(progress) {
+                const percentage = Math.round(progress * 100);
+                this.progressBar.style.width = `${percentage}%`;
+                this.progressText.textContent = `Downloading: ${percentage}%`;
+            }
+
+            async downloadAndLoadPDF() {
                 try {
                     // Configure PDF.js
                     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
-                    // Load PDF
-                    const pdfDocument = await pdfjsLib.getDocument(url).promise;
+                    // Load PDF with progress
+                    const loadingTask = pdfjsLib.getDocument(this.pdfUrl);
                     
-                    // Render all pages
-                    for (let pageNum = 1; pageNum <= pdfDocument.numPages; pageNum++) {
-                        await this.renderPage(pdfDocument, pageNum);
-                    }
+                    loadingTask.onProgress = (progressData) => {
+                        if (progressData.total > 0) {
+                            const progress = progressData.loaded / progressData.total;
+                            this.updateProgress(progress);
+                        }
+                    };
+
+                    const pdfDocument = await loadingTask.promise;
+                    
+                    // Store in localStorage for future visits
+                    localStorage.setItem(this.pdfUrl, this.pdfUrl);
+
+                    // Hide download screen after completion
+                    setTimeout(() => {
+                        this.downloadScreen.style.display = 'none';
+                    }, 500);
+
+                    // Render PDF
+                    await this.renderPDF(pdfDocument);
+
+                } catch (error) {
+                    console.error('PDF Loading Error:', error);
+                    this.progressText.textContent = `Error: ${error.message}`;
+                    this.progressText.style.color = 'red';
+                }
+            }
+
+            async loadPDF(data) {
+                try {
+                    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+                    const pdfDocument = await pdfjsLib.getDocument(data).promise;
+                    await this.renderPDF(pdfDocument);
                 } catch (error) {
                     console.error('PDF Loading Error:', error);
                     this.pdfContainer.innerHTML = `<p>Error loading PDF: ${error.message}</p>`;
                 }
             }
 
+            async renderPDF(pdfDocument) {
+                const totalPages = pdfDocument.numPages;
+                
+                for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+                    await this.renderPage(pdfDocument, pageNum);
+                }
+            }
+
             async renderPage(pdfDocument, pageNumber) {
                 const page = await pdfDocument.getPage(pageNumber);
                 
-                // Create canvas for page
                 const canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');
                 this.pdfContainer.appendChild(canvas);
 
-                // Calculate viewport with default scale
                 const viewport = page.getViewport({ scale: 1.5 });
                 canvas.height = viewport.height;
                 canvas.width = viewport.width;
 
-                // Render page on canvas
                 const renderContext = {
                     canvasContext: context,
                     viewport: viewport
@@ -86,8 +214,9 @@
         }
 
         // Initialize PDF Viewer
-        const pdfViewer = new PDFViewer();
-        pdfViewer.loadPDF('18.pdf');
+        document.addEventListener('DOMContentLoaded', () => {
+            const pdfViewer = new PDFViewer();
+        });
     </script>
 </body>
 </html>
