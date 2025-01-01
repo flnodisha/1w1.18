@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Scrollable PDF Viewer with Offline Support</title>
+    <title>PDF Viewer with Double Tap Zoom and Page Numbers</title>
     <style>
         html, body {
             margin: 0;
@@ -29,242 +29,114 @@
         }
         #pdf-render canvas {
             max-width: 100%;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             margin-bottom: 10px;
         }
-        .download-container {
+        .page-number {
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(255, 255, 255, 0.95);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-        .download-button {
-            padding: 12px 24px;
-            font-size: 16px;
-            background-color: #4CAF50;
+            bottom: 10px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
             color: white;
-            border: none;
+            padding: 5px 10px;
             border-radius: 5px;
-            cursor: pointer;
-            margin-bottom: 20px;
-            transition: background-color 0.3s;
-        }
-        .download-button:hover {
-            background-color: #45a049;
-        }
-        .progress-container {
-            width: 300px;
-            display: none;
-        }
-        .progress-bar {
-            width: 100%;
-            height: 20px;
-            background-color: #f0f0f0;
-            border-radius: 10px;
-            overflow: hidden;
-            margin-bottom: 10px;
-        }
-        .progress {
-            width: 0%;
-            height: 100%;
-            background-color: #4CAF50;
-            transition: width 0.3s ease-in-out;
-        }
-        .progress-text {
-            text-align: center;
-            color: #333;
-        }
-        .status-text {
-            margin-top: 10px;
             font-size: 14px;
-            color: #666;
+            z-index: 100;
         }
     </style>
-</head>
-<body>
-    <div class="download-container" id="download-screen">
-        <button class="download-button" id="download-button">Download PDF</button>
-        <div class="progress-container" id="progress-container">
-            <div class="progress-bar">
-                <div class="progress" id="progress-bar"></div>
-            </div>
-            <div class="progress-text" id="progress-text">Downloading: 0%</div>
-            <div class="status-text" id="status-text"></div>
-        </div>
-    </div>
-    
-    <div id="pdf-container">
-        <div id="pdf-render"></div>
-    </div>
-
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
     <script src="https://hammerjs.github.io/dist/hammer.min.js"></script>
-    
+</head>
+<body>
+    <div id="pdf-container">
+        <div id="pdf-render"></div>
+        <div class="page-number" id="page-number">Page 1</div>
+    </div>
+
     <script>
         class PDFViewer {
             constructor() {
                 this.pdfContainer = document.getElementById('pdf-render');
-                this.downloadScreen = document.getElementById('download-screen');
-                this.downloadButton = document.getElementById('download-button');
-                this.progressContainer = document.getElementById('progress-container');
-                this.progressBar = document.getElementById('progress-bar');
-                this.progressText = document.getElementById('progress-text');
-                this.statusText = document.getElementById('status-text');
-                
+                this.pageNumberDisplay = document.getElementById('page-number');
                 this.pdfUrl = 'Mil1.pdf';
-                this.storageKey = 'offline_pdf_' + this.pdfUrl;
-                this.initializeViewer();
+                this.currentPage = 1;
+                this.pdfDocument = null;
+                this.scale = 1; // Default scale
+                this.isZoomedIn = false; // State for zoom
+                this.initHammerJS();
+
+                this.loadPDF();
             }
 
-            initializeViewer() {
-                // Check if PDF is already in localStorage
-                const storedPDF = localStorage.getItem(this.storageKey);
-                if (storedPDF) {
-                    this.downloadScreen.style.display = 'none';
-                    this.loadPDFFromStorage(storedPDF);
-                } else {
-                    this.setupDownloadButton();
-                }
-            }
-
-            setupDownloadButton() {
-                this.downloadButton.addEventListener('click', async () => {
-                    this.downloadButton.style.display = 'none';
-                    this.progressContainer.style.display = 'block';
-                    await this.downloadAndStorePDF();
-                });
-            }
-
-            updateProgress(progress, status = '') {
-                const percentage = Math.round(progress * 100);
-                this.progressBar.style.width = `${percentage}%`;
-                this.progressText.textContent = `Downloading: ${percentage}%`;
-                if (status) {
-                    this.statusText.textContent = status;
-                }
-            }
-
-            async loadPDFFromStorage(base64data) {
-    try {
-        // Configure PDF.js
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-
-        // Convert base64 to array buffer
-        const binary = atob(base64data.split(',')[1]);
-        const array = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-            array[i] = binary.charCodeAt(i);
-        }
-
-        const loadingTask = pdfjsLib.getDocument({ data: array });
-        const pdf = await loadingTask.promise;
-
-        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-            const page = await pdf.getPage(pageNum);
-            const viewport = page.getViewport({ scale: 1 });
-
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-
-            const renderContext = {
-                canvasContext: context,
-                viewport: viewport,
-            };
-
-            await page.render(renderContext).promise;
-            this.pdfContainer.appendChild(canvas);
-
-            // Add gesture support using Hammer.js
-            const hammer = new Hammer(canvas);
-            let scale = 1;
-
-            hammer.get('pinch').set({ enable: true });
-
-            hammer.on('pinch', (ev) => {
-                scale = Math.max(1, Math.min(3, scale * ev.scale));
-                canvas.style.transform = `scale(${scale})`;
-            });
-
-            hammer.on('doubletap', () => {
-                scale = scale === 1 ? 2 : 1;
-                canvas.style.transform = `scale(${scale})`;
-            });
-        }
-    } catch (error) {
-        console.error('Error loading PDF:', error);
-    }
-}
-
-
-            blobToBase64(blob) {
-                return new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve(reader.result);
-                    reader.onerror = reject;
-                    reader.readAsDataURL(blob);
-                });
-            }
-
-            async loadPDFFromStorage(base64data) {
+            async loadPDF() {
                 try {
-                    // Configure PDF.js
                     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-                    
-                    // Convert base64 to array buffer
-                    const binary = atob(base64data.split(',')[1]);
-                    const array = new Uint8Array(binary.length);
-                    for (let i = 0; i < binary.length; i++) {
-                        array[i] = binary.charCodeAt(i);
-                    }
-
-                    // Load and render PDF
-                    const loadingTask = pdfjsLib.getDocument(array);
-                    const pdfDocument = await loadingTask.promise;
-                    await this.renderPDF(pdfDocument);
-
+                    const loadingTask = pdfjsLib.getDocument(this.pdfUrl);
+                    this.pdfDocument = await loadingTask.promise;
+                    this.renderPage(this.currentPage);
                 } catch (error) {
-                    console.error('PDF Loading Error:', error);
-                    this.pdfContainer.innerHTML = `<p>Error loading PDF: ${error.message}</p>`;
+                    console.error('Error loading PDF:', error);
                 }
             }
 
-            async renderPDF(pdfDocument) {
-                const totalPages = pdfDocument.numPages;
-                
-                for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-                    await this.renderPage(pdfDocument, pageNum);
+            async renderPage(pageNumber) {
+                try {
+                    const page = await this.pdfDocument.getPage(pageNumber);
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    this.pdfContainer.innerHTML = ''; // Clear the container
+                    this.pdfContainer.appendChild(canvas);
+
+                    const viewport = page.getViewport({ scale: this.scale });
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
+
+                    const renderContext = {
+                        canvasContext: context,
+                        viewport: viewport,
+                    };
+
+                    await page.render(renderContext);
+                    this.updatePageNumber();
+                } catch (error) {
+                    console.error('Error rendering page:', error);
                 }
             }
 
-            async renderPage(pdfDocument, pageNumber) {
-                const page = await pdfDocument.getPage(pageNumber);
-                
-                const canvas = document.createElement('canvas');
-                const context = canvas.getContext('2d');
-                this.pdfContainer.appendChild(canvas);
+            updatePageNumber() {
+                this.pageNumberDisplay.textContent = `Page ${this.currentPage} of ${this.pdfDocument.numPages}`;
+            }
 
-                const viewport = page.getViewport({ scale: 1.5 });
-                canvas.height = viewport.height;
-                canvas.width = viewport.width;
+            initHammerJS() {
+                const hammer = new Hammer(this.pdfContainer);
 
-                const renderContext = {
-                    canvasContext: context,
-                    viewport: viewport
-                };
-                await page.render(renderContext);
+                hammer.get('doubletap').set({ posThreshold: 30 });
+
+                hammer.on('tap', (e) => {
+                    this.scale = this.isZoomedIn ? 1 : 1.5; // Toggle zoom in and out
+                    this.isZoomedIn = !this.isZoomedIn;
+                    this.renderPage(this.currentPage);
+                });
+
+                hammer.on('doubletap', (e) => {
+                    this.scale = this.isZoomedIn ? 2 : 1; // Toggle between zoom out and normal
+                    this.isZoomedIn = !this.isZoomedIn;
+                    this.renderPage(this.currentPage);
+                });
+
+                hammer.on('swipeleft', () => this.changePage(1)); // Next page
+                hammer.on('swiperight', () => this.changePage(-1)); // Previous page
+            }
+
+            changePage(offset) {
+                const newPage = this.currentPage + offset;
+                if (newPage >= 1 && newPage <= this.pdfDocument.numPages) {
+                    this.currentPage = newPage;
+                    this.renderPage(newPage);
+                }
             }
         }
 
-        // Initialize PDF Viewer
         document.addEventListener('DOMContentLoaded', () => {
             const pdfViewer = new PDFViewer();
         });
