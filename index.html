@@ -105,6 +105,8 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://hammerjs.github.io/dist/hammer.min.js"></script>
+    
     <script>
         class PDFViewer {
             constructor() {
@@ -149,47 +151,59 @@
                 }
             }
 
-            async downloadAndStorePDF() {
-                try {
-                    this.updateProgress(0, 'Fetching PDF file...');
-                    
-                    // Fetch the PDF file
-                    const response = await fetch(this.pdfUrl);
-                    const pdfBlob = await response.blob();
-                    
-                    this.updateProgress(0.3, 'Converting to base64...');
-                    
-                    // Convert blob to base64
-                    const base64data = await this.blobToBase64(pdfBlob);
-                    
-                    this.updateProgress(0.6, 'Storing PDF for offline use...');
-                    
-                    // Store in localStorage
-                    try {
-                        localStorage.setItem(this.storageKey, base64data);
-                    } catch (e) {
-                        console.error('Storage error:', e);
-                        this.statusText.textContent = 'Error: PDF too large for storage. Proceeding with online viewing.';
-                    }
+            async loadPDFFromStorage(base64data) {
+    try {
+        // Configure PDF.js
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
-                    this.updateProgress(0.8, 'Preparing PDF viewer...');
-                    
-                    // Load the PDF
-                    await this.loadPDFFromStorage(base64data);
-                    
-                    this.updateProgress(1, 'Complete!');
-                    
-                    // Hide download screen
-                    setTimeout(() => {
-                        this.downloadScreen.style.display = 'none';
-                    }, 500);
+        // Convert base64 to array buffer
+        const binary = atob(base64data.split(',')[1]);
+        const array = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            array[i] = binary.charCodeAt(i);
+        }
 
-                } catch (error) {
-                    console.error('PDF Loading Error:', error);
-                    this.progressText.textContent = `Error: ${error.message}`;
-                    this.progressText.style.color = 'red';
-                }
-            }
+        const loadingTask = pdfjsLib.getDocument({ data: array });
+        const pdf = await loadingTask.promise;
+
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+            const page = await pdf.getPage(pageNum);
+            const viewport = page.getViewport({ scale: 1 });
+
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+
+            const renderContext = {
+                canvasContext: context,
+                viewport: viewport,
+            };
+
+            await page.render(renderContext).promise;
+            this.pdfContainer.appendChild(canvas);
+
+            // Add gesture support using Hammer.js
+            const hammer = new Hammer(canvas);
+            let scale = 1;
+
+            hammer.get('pinch').set({ enable: true });
+
+            hammer.on('pinch', (ev) => {
+                scale = Math.max(1, Math.min(3, scale * ev.scale));
+                canvas.style.transform = `scale(${scale})`;
+            });
+
+            hammer.on('doubletap', () => {
+                scale = scale === 1 ? 2 : 1;
+                canvas.style.transform = `scale(${scale})`;
+            });
+        }
+    } catch (error) {
+        console.error('Error loading PDF:', error);
+    }
+}
+
 
             blobToBase64(blob) {
                 return new Promise((resolve, reject) => {
