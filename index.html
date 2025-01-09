@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Scrollable PDF Viewer with Offline Support</title>
+    <title>PDF Viewer with Loading Animation</title>
     <style>
         html, body {
             margin: 0;
@@ -32,7 +32,7 @@
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             margin-bottom: 10px;
         }
-        .download-container {
+        .loading-container {
             position: fixed;
             top: 0;
             left: 0;
@@ -45,59 +45,29 @@
             align-items: center;
             z-index: 1000;
         }
-        .download-button {
-            padding: 12px 24px;
-            font-size: 16px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
             margin-bottom: 20px;
-            transition: background-color 0.3s;
         }
-        .download-button:hover {
-            background-color: #45a049;
-        }
-        .progress-container {
-            width: 300px;
-            display: none;
-        }
-        .progress-bar {
-            width: 100%;
-            height: 20px;
-            background-color: #f0f0f0;
-            border-radius: 10px;
-            overflow: hidden;
-            margin-bottom: 10px;
-        }
-        .progress {
-            width: 0%;
-            height: 100%;
-            background-color: #4CAF50;
-            transition: width 0.3s ease-in-out;
-        }
-        .progress-text {
-            text-align: center;
+        .loading-text {
+            font-size: 18px;
             color: #333;
         }
-        .status-text {
-            margin-top: 10px;
-            font-size: 14px;
-            color: #666;
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
 <body>
-    <div class="download-container" id="download-screen">
-        <button class="download-button" id="download-button">Download PDF</button>
-        <div class="progress-container" id="progress-container">
-            <div class="progress-bar">
-                <div class="progress" id="progress-bar"></div>
-            </div>
-            <div class="progress-text" id="progress-text">Downloading: 0%</div>
-            <div class="status-text" id="status-text"></div>
-        </div>
+    <div class="loading-container" id="loading-screen">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading PDF...</div>
     </div>
     
     <div id="pdf-container">
@@ -109,108 +79,25 @@
         class PDFViewer {
             constructor() {
                 this.pdfContainer = document.getElementById('pdf-render');
-                this.downloadScreen = document.getElementById('download-screen');
-                this.downloadButton = document.getElementById('download-button');
-                this.progressContainer = document.getElementById('progress-container');
-                this.progressBar = document.getElementById('progress-bar');
-                this.progressText = document.getElementById('progress-text');
-                this.statusText = document.getElementById('status-text');
-                
+                this.loadingScreen = document.getElementById('loading-screen');
                 this.pdfUrl = 'posana_Compress.pdf';
-                this.storageKey = 'offline_pdf_' + this.pdfUrl;
                 this.initializeViewer();
             }
 
-            initializeViewer() {
-                const storedPDF = localStorage.getItem(this.storageKey);
-                if (storedPDF) {
-                    this.downloadScreen.style.display = 'none';
-                    this.loadPDFFromStorage(storedPDF);
-                } else {
-                    this.setupDownloadButton();
-                }
-            }
-
-            setupDownloadButton() {
-                this.downloadButton.addEventListener('click', async () => {
-                    this.downloadButton.style.display = 'none';
-                    this.progressContainer.style.display = 'block';
-                    await this.downloadAndStorePDF();
-                });
-            }
-
-            updateProgress(progress, status = '') {
-                const percentage = Math.round(progress * 100);
-                this.progressBar.style.width = `${percentage}%`;
-                this.progressText.textContent = `Downloading: ${percentage}%`;
-                if (status) {
-                    this.statusText.textContent = status;
-                }
-            }
-
-            async downloadAndStorePDF() {
-                try {
-                    this.updateProgress(0, 'Fetching PDF file...');
-                    
-                    const response = await fetch(this.pdfUrl);
-                    const pdfBlob = await response.blob();
-                    
-                    this.updateProgress(0.3, 'Converting to base64...');
-                    
-                    const base64data = await this.blobToBase64(pdfBlob);
-                    
-                    this.updateProgress(0.6, 'Storing PDF for offline use...');
-                    
-                    try {
-                        localStorage.setItem(this.storageKey, base64data);
-                    } catch (e) {
-                        console.error('Storage error:', e);
-                        this.statusText.textContent = 'Error: PDF too large for storage. Proceeding with online viewing.';
-                    }
-
-                    this.updateProgress(0.8, 'Preparing PDF viewer...');
-                    
-                    await this.loadPDFFromStorage(base64data);
-                    
-                    this.updateProgress(1, 'Complete!');
-                    
-                    setTimeout(() => {
-                        this.downloadScreen.style.display = 'none';
-                    }, 500);
-
-                } catch (error) {
-                    console.error('PDF Loading Error:', error);
-                    this.progressText.textContent = `Error: ${error.message}`;
-                    this.progressText.style.color = 'red';
-                }
-            }
-
-            blobToBase64(blob) {
-                return new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve(reader.result);
-                    reader.onerror = reject;
-                    reader.readAsDataURL(blob);
-                });
-            }
-
-            async loadPDFFromStorage(base64data) {
+            async initializeViewer() {
                 try {
                     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
                     
-                    const binary = atob(base64data.split(',')[1]);
-                    const array = new Uint8Array(binary.length);
-                    for (let i = 0; i < binary.length; i++) {
-                        array[i] = binary.charCodeAt(i);
-                    }
-
-                    const loadingTask = pdfjsLib.getDocument(array);
+                    const loadingTask = pdfjsLib.getDocument(this.pdfUrl);
                     const pdfDocument = await loadingTask.promise;
                     await this.renderPDF(pdfDocument);
-
+                    
+                    // Hide loading screen after rendering is complete
+                    this.loadingScreen.style.display = 'none';
                 } catch (error) {
                     console.error('PDF Loading Error:', error);
                     this.pdfContainer.innerHTML = `<p>Error loading PDF: ${error.message}</p>`;
+                    this.loadingScreen.style.display = 'none';
                 }
             }
 
