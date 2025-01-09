@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>PDF Viewer with Loading Animation</title>
+    <title>PDF Viewer with Loading Animation and Storage</title>
     <style>
         html, body {
             margin: 0;
@@ -46,8 +46,8 @@
             z-index: 1000;
         }
         .spinner {
-            width: 150px;
-            height: 150px;
+            width: 50px;
+            height: 50px;
             border: 5px solid #f3f3f3;
             border-top: 5px solid #4CAF50;
             border-radius: 50%;
@@ -67,7 +67,7 @@
 <body>
     <div class="loading-container" id="loading-screen">
         <div class="spinner"></div>
-        <div class="loading-text">Loading...</div>
+        <div class="loading-text">Loading PDF...</div>
     </div>
     
     <div id="pdf-container">
@@ -81,6 +81,7 @@
                 this.pdfContainer = document.getElementById('pdf-render');
                 this.loadingScreen = document.getElementById('loading-screen');
                 this.pdfUrl = 'posana_Compress.pdf';
+                this.storageKey = 'offline_pdf_' + this.pdfUrl;
                 this.initializeViewer();
             }
 
@@ -88,9 +89,25 @@
                 try {
                     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
                     
-                    const loadingTask = pdfjsLib.getDocument(this.pdfUrl);
-                    const pdfDocument = await loadingTask.promise;
-                    await this.renderPDF(pdfDocument);
+                    // Check if PDF is in storage
+                    const storedPDF = localStorage.getItem(this.storageKey);
+                    
+                    if (storedPDF) {
+                        await this.loadPDFFromStorage(storedPDF);
+                    } else {
+                        // Download and store PDF if not in storage
+                        const response = await fetch(this.pdfUrl);
+                        const pdfBlob = await response.blob();
+                        const base64data = await this.blobToBase64(pdfBlob);
+                        
+                        try {
+                            localStorage.setItem(this.storageKey, base64data);
+                        } catch (e) {
+                            console.error('Storage error:', e);
+                        }
+                        
+                        await this.loadPDFFromStorage(base64data);
+                    }
                     
                     // Hide loading screen after rendering is complete
                     this.loadingScreen.style.display = 'none';
@@ -99,6 +116,27 @@
                     this.pdfContainer.innerHTML = `<p>Error loading PDF: ${error.message}</p>`;
                     this.loadingScreen.style.display = 'none';
                 }
+            }
+
+            blobToBase64(blob) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+            }
+
+            async loadPDFFromStorage(base64data) {
+                const binary = atob(base64data.split(',')[1]);
+                const array = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {
+                    array[i] = binary.charCodeAt(i);
+                }
+
+                const loadingTask = pdfjsLib.getDocument(array);
+                const pdfDocument = await loadingTask.promise;
+                await this.renderPDF(pdfDocument);
             }
 
             async renderPDF(pdfDocument) {
